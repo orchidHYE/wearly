@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocket 채팅 테스트</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/sockjs-client/1.5.1/sockjs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .container {
+            border: 1px solid #ccc;
+            padding: 20px;
+            border-radius: 5px;
+        }
+        .input-group {
+            margin-bottom: 10px;
+        }
+        label {
+            display: inline-block;
+            width: 100px;
+        }
+        input, textarea {
+            width: 200px;
+            padding: 5px;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        .messages {
+            height: 300px;
+            border: 1px solid #ccc;
+            padding: 10px;
+            overflow-y: auto;
+            background-color: #f9f9f9;
+            margin-top: 10px;
+        }
+        .message {
+            margin-bottom: 5px;
+            padding: 5px;
+            background-color: white;
+            border-radius: 3px;
+        }
+        .status {
+            color: #666;
+            font-style: italic;
+        }
+        .result {
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: 5px;
+            font-weight: bold;
+        }
+        .success {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .error {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>WebSocket 채팅 테스트</h1>
+        
+        <div class="input-group">
+            <label>연결 상태:</label>
+            <span id="connectionStatus">연결 안됨</span>
+        </div>
+        
+        <div class="input-group">
+            <label>보내는 사람 ID:</label>
+            <input type="number" id="senderId" value="1">
+        </div>
+        
+        <div class="input-group">
+            <label>받는 사람 ID:</label>
+            <input type="number" id="receiverId" value="2">
+        </div>
+        
+        <div class="input-group">
+            <label>메시지:</label>
+            <textarea id="messageText" rows="3" placeholder="메시지를 입력하세요..."></textarea>
+        </div>
+        
+        <div class="input-group">
+            <label>이미지 첨부:</label>
+            <input type="file" id="chatImageFile" accept="image/*">
+        </div>
+        <div id="imageUploadResult" class="result" style="display:none;"></div>
+        
+        <button onclick="connect()">연결</button>
+        <button onclick="disconnect()">연결 해제</button>
+        <button onclick="sendMessage()">메시지 전송</button>
+        <button onclick="clearMessages()">메시지 지우기</button>
+        <button onclick="uploadChatImage()">이미지 업로드</button>
+        
+        <h3>수신된 메시지:</h3>
+        <div id="messages" class="messages"></div>
+    </div>
+
+    <script>
+        let stompClient = null;
+        let currentRoom = null;
+        let uploadedImageUrl = '';
+
+        function setSendButtonDisabled(disabled) {
+            document.getElementById('sendBtn').disabled = disabled;
+        }
+
+        function connect() {
+            const socket = new SockJS('/ws-chat');
+            stompClient = Stomp.over(socket);
+            
+            stompClient.connect({}, function (frame) {
+                console.log('Connected: ' + frame);
+                document.getElementById('connectionStatus').textContent = '연결됨';
+                document.getElementById('connectionStatus').style.color = 'green';
+                
+                // 채팅방 구독
+                subscribeToChat();
+            }, function(error) {
+                console.log('STOMP error: ' + error);
+                document.getElementById('connectionStatus').textContent = '연결 실패';
+                document.getElementById('connectionStatus').style.color = 'red';
+            });
+        }
+
+        function disconnect() {
+            if (stompClient !== null) {
+                stompClient.disconnect();
+                stompClient = null;
+                document.getElementById('connectionStatus').textContent = '연결 안됨';
+                document.getElementById('connectionStatus').style.color = 'black';
+            }
+        }
+
+        function subscribeToChat() {
+            const senderId = parseInt(document.getElementById('senderId').value);
+            const receiverId = parseInt(document.getElementById('receiverId').value);
+            
+            // 채팅방 ID 생성 (서버와 동일한 로직)
+            currentRoom = senderId < receiverId ? 
+                senderId + "." + receiverId : 
+                receiverId + "." + senderId;
+            
+            stompClient.subscribe('/topic/chat.' + currentRoom, function (message) {
+                const receivedMessage = JSON.parse(message.body);
+                displayMessage(receivedMessage);
+            });
+            
+            addStatusMessage('채팅방 ' + currentRoom + '에 구독했습니다.');
+        }
+
+        function uploadChatImage() {
+            const fileInput = document.getElementById('chatImageFile');
+            const file = fileInput.files[0];
+            if (!file) {
+                showImageUploadResult('파일을 선택해주세요.', 'error');
+                return;
+            }
+            if (!file.type.startsWith('image/')) {
+                showImageUploadResult('이미지 파일만 업로드 가능합니다.', 'error');
+                return;
+            }
+            const formData = new FormData();
+            formData.append('file', file);
+            showImageUploadResult('이미지 업로드 중...', '');
+            fetch('/api/messages/image', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => {
+                if (!response.ok) return response.text().then(text => { throw new Error(text); });
+                return response.text();
+            })
+            .then(imageUrl => {
+                uploadedImageUrl = imageUrl;
+                showImageUploadResult('업로드 성공! 이미지가 첨부됩니다.', 'success');
+            })
+            .catch(error => {
+                showImageUploadResult('업로드 실패: ' + error.message, 'error');
+            });
+        }
+
+        function showImageUploadResult(message, type) {
+            const el = document.getElementById('imageUploadResult');
+            el.textContent = message;
+            el.className = 'result ' + type;
+            el.style.display = 'block';
+        }
+
+        function sendMessage() {
+            if (stompClient === null) {
+                alert('먼저 연결해주세요!');
+                return;
+            }
+            const senderId = parseInt(document.getElementById('senderId').value);
+            const receiverId = parseInt(document.getElementById('receiverId').value);
+            const messageText = document.getElementById('messageText').value;
+            if (!messageText.trim() && !uploadedImageUrl) {
+                alert('메시지나 이미지를 입력/첨부해주세요!');
+                return;
+            }
+            let messageType = 'TEXT';
+            if (uploadedImageUrl) messageType = 'IMAGE';
+            const message = {
+                senderId: senderId,
+                receiverId: receiverId,
+                content: messageText,
+                imageUrl: uploadedImageUrl || null,
+                messageType: messageType,
+                timestamp: new Date().toISOString()
+            };
+            stompClient.send("/app/chat.send", {}, JSON.stringify(message));
+            document.getElementById('messageText').value = '';
+            document.getElementById('chatImageFile').value = '';
+            uploadedImageUrl = '';
+            document.getElementById('imageUploadResult').style.display = 'none';
+        }
+
+        function displayMessage(message) {
+            const messagesDiv = document.getElementById('messages');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message';
+            let html = `<strong>${message.senderId}</strong> → <strong>${message.receiverId}</strong>:`;
+            if (message.content) {
+                html += ` ${message.content}`;
+            }
+            if (message.imageUrl) {
+                html += `<br><img src="${message.imageUrl}" style="max-width:200px;max-height:200px;border:1px solid #ccc;border-radius:3px;">`;
+            }
+            html += ` <small>(${new Date(message.timestamp).toLocaleString()})</small>`;
+            messageDiv.innerHTML = html;
+            messagesDiv.appendChild(messageDiv);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+
+        function addStatusMessage(text) {
+            const messagesDiv = document.getElementById('messages');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message status';
+            messageDiv.textContent = text;
+            messagesDiv.appendChild(messageDiv);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+
+        function clearMessages() {
+            document.getElementById('messages').innerHTML = '';
+        }
+
+        // Enter 키로 메시지 전송
+        document.getElementById('messageText').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();  
+            }
+        });
+    </script>
+</body>
+</html> 

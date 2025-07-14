@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>S3 이미지 테스트</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .container {
+            border: 1px solid #ccc;
+            padding: 20px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+        .input-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: inline-block;
+            width: 120px;
+            font-weight: bold;
+        }
+        input, textarea {
+            width: 300px;
+            padding: 8px;
+            border: 1px solid #ccc;
+            border-radius: 3px;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        button.danger {
+            background-color: #dc3545;
+        }
+        button.danger:hover {
+            background-color: #c82333;
+        }
+        .result {
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: 3px;
+            background-color: #f8f9fa;
+            border-left: 4px solid #007bff;
+        }
+        .error {
+            background-color: #f8d7da;
+            border-left-color: #dc3545;
+        }
+        .success {
+            background-color: #d4edda;
+            border-left-color: #28a745;
+        }
+        .image-preview {
+            max-width: 300px;
+            max-height: 300px;
+            margin-top: 10px;
+            border: 1px solid #ccc;
+            border-radius: 3px;
+        }
+        .upload-area {
+            border: 2px dashed #ccc;
+            padding: 20px;
+            text-align: center;
+            border-radius: 5px;
+            margin: 10px 0;
+            cursor: pointer;
+        }
+        .upload-area:hover {
+            border-color: #007bff;
+            background-color: #f8f9fa;
+        }
+        .upload-area.dragover {
+            border-color: #007bff;
+            background-color: #e3f2fd;
+        }
+    </style>
+</head>
+<body>
+    <h1>S3 이미지 테스트</h1>
+    
+    <!-- 이미지 업로드 섹션 -->
+    <div class="container">
+        <h2>이미지 업로드</h2>
+        <div class="input-group">
+            <label>이미지 파일:</label>
+            <input type="file" id="imageFile" accept="image/*">
+        </div>
+        <div class="upload-area" id="uploadArea">
+            <p>파일을 여기에 드래그하거나 클릭하여 선택하세요</p>
+        </div>
+        <button onclick="uploadImage()">S3에 업로드</button>
+        <div id="uploadResult" class="result" style="display: none;"></div>
+    </div>
+
+    <!-- 이미지 다운로드 섹션 -->
+    <div class="container">
+        <h2>이미지 다운로드</h2>
+        <div class="input-group">
+            <label>S3 이미지 URL:</label>
+            <input type="text" id="imageUrl" placeholder="https://bucket-name.s3.region.amazonaws.com/images/...">
+        </div>
+        <button onclick="downloadImage()">이미지 다운로드</button>
+        <button onclick="deleteImage()" class="danger">이미지 삭제</button>
+        <div id="downloadResult" class="result" style="display: none;"></div>
+        <img id="imagePreview" class="image-preview" style="display: none;">
+    </div>
+
+    <!-- 업로드된 이미지 목록 -->
+    <div class="container">
+        <h2>업로드된 이미지 목록</h2>
+        <button onclick="loadUploadedImages()">목록 새로고침</button>
+        <div id="imageList"></div>
+    </div>
+
+    <script>
+        // 파일 드래그 앤 드롭 기능
+        const uploadArea = document.getElementById('uploadArea');
+        const imageFile = document.getElementById('imageFile');
+
+        uploadArea.addEventListener('click', () => imageFile.click());
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragover');
+        });
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                imageFile.files = files;
+            }
+        });
+
+        // 이미지 업로드
+        async function uploadImage() {
+            const fileInput = document.getElementById('imageFile');
+            const file = fileInput.files[0];
+            
+            if (!file) {
+                showResult('uploadResult', '파일을 선택해주세요.', 'error');
+                return;
+            }
+
+            if (!file.type.startsWith('image/')) {
+                showResult('uploadResult', '이미지 파일만 업로드 가능합니다.', 'error');
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const response = await fetch('/api/messages/image', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (response.ok) {
+                    const imageUrl = await response.text();
+                    showResult('uploadResult', `업로드 성공! URL: ${imageUrl}`, 'success');
+                    document.getElementById('imageUrl').value = imageUrl;
+                } else {
+                    const errorMessage = await response.text();
+                    showResult('uploadResult', `업로드 실패: ${errorMessage}`, 'error');
+                }
+            } catch (error) {
+                showResult('uploadResult', `업로드 실패: ${error.message}`, 'error');
+            }
+        }
+
+        // 이미지 다운로드
+        async function downloadImage() {
+            const imageUrl = document.getElementById('imageUrl').value;
+            
+            if (!imageUrl) {
+                showResult('downloadResult', '이미지 URL을 입력해주세요.', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/messages/image?imageUrl=${encodeURIComponent(imageUrl)}`);
+                
+                if (response.ok) {
+                    const blob = await response.blob();
+                    const imageUrl = URL.createObjectURL(blob);
+                    
+                    const preview = document.getElementById('imagePreview');
+                    preview.src = imageUrl;
+                    preview.style.display = 'block';
+                    
+                    showResult('downloadResult', '이미지 다운로드 성공!', 'success');
+                } else {
+                    showResult('downloadResult', '이미지 다운로드 실패', 'error');
+                }
+            } catch (error) {
+                showResult('downloadResult', `다운로드 실패: ${error.message}`, 'error');
+            }
+        }
+
+        // 이미지 삭제
+        async function deleteImage() {
+            const imageUrl = document.getElementById('imageUrl').value;
+            
+            if (!imageUrl) {
+                showResult('downloadResult', '이미지 URL을 입력해주세요.', 'error');
+                return;
+            }
+
+            if (!confirm('정말로 이 이미지를 삭제하시겠습니까?')) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/messages/image?imageUrl=${encodeURIComponent(imageUrl)}`, {
+                    method: 'DELETE'
+                });
+                
+                if (response.ok) {
+                    const result = await response.text();
+                    showResult('downloadResult', result, 'success');
+                    document.getElementById('imageUrl').value = '';
+                    document.getElementById('imagePreview').style.display = 'none';
+                } else {
+                    const errorMessage = await response.text();
+                    showResult('downloadResult', `삭제 실패: ${errorMessage}`, 'error');
+                }
+            } catch (error) {
+                showResult('downloadResult', `삭제 실패: ${error.message}`, 'error');
+            }
+        }
+
+        // 업로드된 이미지 목록 로드 (실제로는 서버에서 목록을 가져와야 함)
+        function loadUploadedImages() {
+            const imageList = document.getElementById('imageList');
+            imageList.innerHTML = '<p>이 기능은 서버에서 이미지 목록 API를 구현해야 합니다.</p>';
+        }
+
+        // 결과 표시
+        function showResult(elementId, message, type) {
+            const element = document.getElementById(elementId);
+            element.textContent = message;
+            element.className = `result ${type}`;
+            element.style.display = 'block';
+        }
+
+        // 파일 선택 시 미리보기
+        imageFile.addEventListener('change', function() {
+            const file = this.files[0];
+            if (file && file.type.startsWith('image/')) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    const preview = document.getElementById('imagePreview');
+                    preview.src = e.target.result;
+                    preview.style.display = 'block';
+                };
+                reader.readAsDataURL(file);
+            }
+        });
+    </script>
+</body>
+</html> 
