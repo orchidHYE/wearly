@@ -1,4 +1,4 @@
-# Wearly - 모노레포
+# Wearly
 
 Spring Boot 백엔드와 Next.js 프론트엔드로 구성된 패션 스타일링 서비스입니다.
 
